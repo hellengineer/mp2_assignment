@@ -1,0 +1,12 @@
+
+*.log
+
+*.un~
+
+*.py~
+
+*.cpp~
+
+Application
+
+*.o
