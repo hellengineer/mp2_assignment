@@ -453,8 +453,8 @@ void MP1Node::handleProt(MessageHdr *msg){
     int id = *(int*)(&msg->addr.addr);
     short port = *(short*)(&msg->addr.addr[4]);
     int found = 0; 
-    for(int i = 0; i < memberNode->memberList.size(); i++) {
-        MemberListEntry *chk = memberNode->memberList.data() + i;
+    for(auto i = memberNode->memberList.begin(); i != memberNode->memberList.end(); i++) {
+        MemberListEntry *chk = &(*i);
         if (chk->id == id && chk->port == port) {
             found = 1;
             if (chk->heartbeat < msg->heartbeat)
