@@ -23,6 +23,12 @@ MP2Node::MP2Node(Member *memberNode, Params *par, EmulNet * emulNet, Log * log, 
 MP2Node::~MP2Node() {
 	delete ht;
 	delete memberNode;
+	// clean up transaction map
+	auto it = txMap.begin();
+	while(it != txMap.end()) {
+		delete it->second;
+		it++;
+	}
 }
 
 /**
@@ -51,12 +57,25 @@ void MP2Node::updateRing() {
 	 */
 	// Sort the list based on the hashCode
 	sort(curMemList.begin(), curMemList.end());
-
+	//check ring against curMemList and decide if anything has changed
+	if (ring.size() != curMemList.size())
+		change = true;
+	else if (ring.size() > 0){
+		for (auto i = 0; i < ring.size(); i++ ){
+			if (curMemList[i].getHashCode() != ring[i].getHashCode()){
+				change = true; // atleast some difference between ring and the current membership list.
+				break;
+			}
+		}
+	}
+	ring = curMemList; // update ring 
 
 	/*
 	 * Step 3: Run the stabilization protocol IF REQUIRED
 	 */
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
+	if (change)
+		stabilizationProtocol();
 }
 
 /**
@@ -98,6 +117,33 @@ size_t MP2Node::hashFunction(string key) {
 	return ret%RING_SIZE;
 }
 
+
+//-----------------------------------------------------------------------
+//   Helper and wrapper functions
+// makes a transaction object and adds it to the txMap map at this node
+void MP2Node::makeTx(int txId, MessageType mT, string key, string value){
+	int timestamp = this->par->getcurrtime();
+	TxStat* trans = new TxStat(txId, timestamp, mT, key, value);
+	this->txMap.emplace(txId, trans);
+}
+
+// returns a message object based on the message type and key value pair
+// also adds a transaction object onto the transaction status map for this node
+// basically a wrapper for Message constructor + transaction maker.
+
+Message MP2Node::makeMsg(MessageType mT, string key, string value=""){
+	int txId = g_transID; // get global transaction id
+	makeTx(txId, mT, key, value);
+	if(mT == CREATE || mT == UPDATE){
+		Message msg(txId, this->memberNode->addr, mT, key, value);
+		return msg;
+	}
+	else if(mT == READ || mT == DELETE){
+		Message msg(txId, this->memberNode->addr, mT, key);
+		return msg;
+	}
+}
+
 /**
  * FUNCTION NAME: clientCreate
  *
@@ -111,6 +157,16 @@ void MP2Node::clientCreate(string key, string value) {
 	/*
 	 * Implement this
 	 */
+	// make message
+	Message msg = makeMsg(MessageType::CREATE, key, value);
+	string message = msg.toString();
+
+	auto replicas = findNodes(key); // get replicas for this key 
+	// send a message to each replica
+	for (auto it = replicas.begin(); it != replicas.end(); it ++){
+		emulNet->ENsend(&memberNode->addr, it->getAddress(), message);
+	}
+	g_transID++; // increment global transaction count for simulation
 }
 
 /**
@@ -126,6 +182,16 @@ void MP2Node::clientRead(string key){
 	/*
 	 * Implement this
 	 */
+	// make message
+	Message msg = makeMsg(MessageType::READ, key);
+	string message = msg.toString();
+
+	auto replicas = findNodes(key); // get replicas for this key 
+	// send a message to each replica
+	for (auto it = replicas.begin(); it != replicas.end(); it ++){
+		emulNet->ENsend(&memberNode->addr, it->getAddress(), message);
+	}
+	g_transID++; // increment global transaction count for simulation
 }
 
 /**
@@ -141,6 +207,16 @@ void MP2Node::clientUpdate(string key, string value){
 	/*
 	 * Implement this
 	 */
+	// make message
+	Message msg = makeMsg(MessageType::UPDATE, key, value);
+	string message = msg.toString();
+
+	auto replicas = findNodes(key); // get replicas for this key 
+	// send a message to each replica
+	for (auto it = replicas.begin(); it != replicas.end(); it ++){
+		emulNet->ENsend(&memberNode->addr, it->getAddress(), message);
+	}
+	g_transID++; // increment global transaction count for simulation
 }
 
 /**
@@ -156,6 +232,16 @@ void MP2Node::clientDelete(string key){
 	/*
 	 * Implement this
 	 */
+	// make message
+	Message msg = makeMsg(MessageType::DELETE, key);
+	string message = msg.toString();
+
+	auto replicas = findNodes(key); // get replicas for this key 
+	// send a message to each replica
+	for (auto it = replicas.begin(); it != replicas.end(); it ++){
+		emulNet->ENsend(&memberNode->addr, it->getAddress(), message);
+	}
+	g_transID++; // increment global transaction count for simulation
 }
 
 /**
@@ -166,11 +252,14 @@ void MP2Node::clientDelete(string key){
  * 			   	1) Inserts key value into the local hash table
  * 			   	2) Return true or false based on success or failure
  */
-bool MP2Node::createKeyValue(string key, string value, ReplicaType replica) {
+bool MP2Node::createKeyValue(string key, string value, ReplicaType replica, int txId) {
 	/*
 	 * Implement this
 	 */
 	// Insert key, value, replicaType into the hash table
+	// if txId == SP
+	bool success = false;
+
 }
 
 /**
@@ -251,6 +340,30 @@ void MP2Node::checkMessages() {
 		/*
 		 * Handle the message types here
 		 */
+		// convert message to Message object, easier to access fields.
+		Message msg(message);
+
+		// different actions based on message type, and have to take care of stabilization messages.
+		switch(msg.type){
+			case MessageType::CREATE:{
+
+			}
+			case MessageType::READ:{
+
+			}
+			case MessageType::UPDATE:{
+
+			}
+			case MessageType::DELETE:{
+
+			}
+			case MessageType::REPLY:{
+				
+			}
+			case MessageType::READREPLY:{
+				
+			}
+		}
 
 	}
 
@@ -328,4 +441,19 @@ void MP2Node::stabilizationProtocol() {
 	/*
 	 * Implement this
 	 */
+	// for each replica transfer over the entire hashtable. May not be as efficient as possible.
+	// call this function after assigning the new current membership list to the ring vector
+	// TODO: update hasReplicas vector as well.
+	for (auto it = this->ht->hashTable.begin(); it != this->ht->hashTable.end(); it++){
+		string key = it->first;
+		string value = it->second;
+		auto replicas = findNodes(key); // get the new replica nodes
+		for (auto i = 0; i < replicas.size(); i++){
+			// create stabilization protocol message which will not be confused with transaction messages
+			Message msg(SP_MSG, this->memberNode->addr, MessageType::CREATE, key, value);
+			string message = msg.toString(); // convert to string
+			// send over network
+			emulNet->ENsend(&memberNode->addr, replicas[i].getAddress(), message);
+		}
+	}
 }

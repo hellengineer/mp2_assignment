@@ -19,6 +19,38 @@
 #include "Message.h"
 #include "Queue.h"
 
+const int SP_MSG = -1; // indicates message is from stabilization protocol (running in  background) and not client operation
+
+
+// need a structure which tracks all pending CRUD transactions for the current node.
+// As any client side operation will make the client the coordinator as well, so I assume
+// that the client will not fail during a transaction. 
+// So we need to keep track of the state of in-flight transactions, and associate the 
+// incoming messages from the servers with the right transactions.
+// So introduce a class which handles the transaction status, add a transaction when a 
+// client sends a message, and finish a transaction when enough servers have replied.
+
+class TxStat {
+	int id;
+	int timestamp;
+public:
+	
+	int repCnt;
+	int sucCnt;
+	string key;
+	string val;
+	MessageType mT;
+	// constructor
+	TxStat(int id, int timestamp, MessageType mT, string key, string val){
+		this->id = id;
+		this->timestamp = timestamp;
+		this->repCnt = 0;
+		this->sucCnt = 0;
+		this->mT = mT;
+		this->key = key;
+		this->val = val;
+	}
+};
 /**
  * CLASS NAME: MP2Node
  *
@@ -47,6 +79,12 @@ private:
 	EmulNet * emulNet;
 	// Object of Log
 	Log * log;
+	// in-flight transactions
+	//<tx_id, tx_obj>
+	map<int, TxStat*> txMap;
+	//<tx_id, is_complete?>
+	map<int, bool> txDn;
+
 
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
@@ -80,7 +118,7 @@ public:
 	vector<Node> findNodes(string key);
 
 	// server
-	bool createKeyValue(string key, string value, ReplicaType replica);
+	bool createKeyValue(string key, string value, ReplicaType replica, int txId);
 	string readKey(string key);
 	bool updateKeyValue(string key, string value, ReplicaType replica);
 	bool deletekey(string key);
@@ -88,7 +126,14 @@ public:
 	// stabilization protocol - handle multiple failures
 	void stabilizationProtocol();
 
+    // Destructor
 	~MP2Node();
+
+	//Own functions
+	//reply from server to client
+	void sendreply(string key, MessageType mT, bool success, Address* fromaddr, int txID, string content = ""); 
+    Message makeMsg(MessageType mT, string key, string value);
+    void makeTx(int txId, MessageType mT, string key, string value = "");
 };
 
 #endif /* MP2NODE_H_ */
