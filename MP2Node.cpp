@@ -335,10 +335,12 @@ bool MP2Node::deletekey(string key, int txId) {
 	// logging done here as well
 	bool success = this->ht->deleteKey(key);
 	// log this operation
-	if (success) 
-	    log->logDeleteSuccess(&memberNode->addr, false, txId, key);
-	else 
-	    log->logDeleteFail(&memberNode->addr, false, txId, key);	
+	if (txId != SP_MSG){
+	    if (success) 
+	        log->logDeleteSuccess(&memberNode->addr, false, txId, key);
+	    else 
+	         log->logDeleteFail(&memberNode->addr, false, txId, key);	
+	 }
 	
 	return success;
 }
@@ -430,7 +432,8 @@ void MP2Node::checkMessages() {
 			}
 			case MessageType::DELETE:{
 				bool success = deletekey(msg.key, msg.transID);
-				srvReply(msg.type, &msg.fromAddr, msg.transID, success);
+				if (msg.type != SP_MSG)
+				    srvReply(msg.type, &msg.fromAddr, msg.transID, success);
 				break;
 
 			}
@@ -514,9 +517,9 @@ void MP2Node::updateTxMap(){
 	while (it != txMap.end()){
 		if (it->second->repCnt == 3){
 			// 3 replies received, can decide now
-			bool status = it->second->sucCnt == 2;
+			bool status = it->second->sucCnt >= 2;
 			//if (!status)
-			//	std::cout<< "Failed to get enough successful messages"<<std::endl;
+			//	std::cout<< "Failed to get enough successful messages "<< it->second->sucCnt << std::endl;
 			clientLog(it->second, true, status, it->first);
 			delete it->second;
 			it = txMap.erase(it);
@@ -525,16 +528,28 @@ void MP2Node::updateTxMap(){
 		else{
 			// speedup early transaction completion for example when first two replies are a success, or the first 
 			// two replies are a failure, or timeout
-			if ((it->second->sucCnt == 2) || (it->second->repCnt-it->second->sucCnt == 2)){
-				bool status = it->second->sucCnt == 2;
-			    clientLog(it->second, true, status, it->first);
+			//if ((it->second->sucCnt == 2) || (it->second->repCnt-it->second->sucCnt == 2)){
+			//	bool status = it->second->sucCnt >= 2;
+			//    clientLog(it->second, true, status, it->first);
+			//    delete it->second;
+			//    it = txMap.erase(it);
+			//    continue;
+			//}
+			if (it->second->sucCnt == 2){
+				clientLog(it->second, true, true, it->first);
+			    delete it->second;
+			    it = txMap.erase(it);
+			    continue;
+			}
+			if (it->second->repCnt-it->second->sucCnt == 2){
+				clientLog(it->second, true, false, it->first);
 			    delete it->second;
 			    it = txMap.erase(it);
 			    continue;
 			}
 		}
 		// timeout
-		if (this->par->getcurrtime() - it->second->getTimestamp() > 30){
+		if (this->par->getcurrtime() - it->second->getTimestamp() > 10){
 			clientLog(it->second, true, false, it->first);
 			delete it->second;
 			it = txMap.erase(it);
