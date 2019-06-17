@@ -38,18 +38,19 @@ public:
 	int repCnt;
 	int sucCnt;
 	string key;
-	string val;
+	string value;
 	MessageType mT;
 	// constructor
-	TxStat(int id, int timestamp, MessageType mT, string key, string val){
+	TxStat(int id, int timestamp, MessageType mT, string key, string value){
 		this->id = id;
 		this->timestamp = timestamp;
 		this->repCnt = 0;
 		this->sucCnt = 0;
 		this->mT = mT;
 		this->key = key;
-		this->val = val;
+		this->value = value;
 	}
+	int getTimestamp(){ return timestamp;}
 };
 /**
  * CLASS NAME: MP2Node
@@ -83,7 +84,7 @@ private:
 	//<tx_id, tx_obj>
 	map<int, TxStat*> txMap;
 	//<tx_id, is_complete?>
-	map<int, bool> txDn;
+	//map<int, bool> txDn;
 
 
 public:
@@ -118,10 +119,11 @@ public:
 	vector<Node> findNodes(string key);
 
 	// server
+	// also add txId for logging right where we update the hash table
 	bool createKeyValue(string key, string value, ReplicaType replica, int txId);
-	string readKey(string key);
-	bool updateKeyValue(string key, string value, ReplicaType replica);
-	bool deletekey(string key);
+	string readKey(string key, int txId);
+	bool updateKeyValue(string key, string value, ReplicaType replica, int txId);
+	bool deletekey(string key, int txId);
 
 	// stabilization protocol - handle multiple failures
 	void stabilizationProtocol();
@@ -134,6 +136,9 @@ public:
 	void sendreply(string key, MessageType mT, bool success, Address* fromaddr, int txID, string content = ""); 
     Message makeMsg(MessageType mT, string key, string value);
     void makeTx(int txId, MessageType mT, string key, string value = "");
+    void srvReply(MessageType mT, Address* fromaddr, int txId, bool success, string data = "");
+    void clientLog(TxStat* tx, bool isCoordinator, bool success, int transID);
+    void updateTxMap();
 };
 
 #endif /* MP2NODE_H_ */

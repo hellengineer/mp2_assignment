@@ -157,7 +157,7 @@ void MP2Node::clientCreate(string key, string value) {
 	/*
 	 * Implement this
 	 */
-	// make message
+	// make message which also adds a pending transaction to txMap
 	Message msg = makeMsg(MessageType::CREATE, key, value);
 	string message = msg.toString();
 
@@ -182,7 +182,7 @@ void MP2Node::clientRead(string key){
 	/*
 	 * Implement this
 	 */
-	// make message
+	// make message which also adds a pending transaction to txMap
 	Message msg = makeMsg(MessageType::READ, key);
 	string message = msg.toString();
 
@@ -207,7 +207,7 @@ void MP2Node::clientUpdate(string key, string value){
 	/*
 	 * Implement this
 	 */
-	// make message
+	// make message which also adds a pending transaction to txMap
 	Message msg = makeMsg(MessageType::UPDATE, key, value);
 	string message = msg.toString();
 
@@ -232,7 +232,7 @@ void MP2Node::clientDelete(string key){
 	/*
 	 * Implement this
 	 */
-	// make message
+	// make message which also adds a pending transaction to txMap
 	Message msg = makeMsg(MessageType::DELETE, key);
 	string message = msg.toString();
 
@@ -257,8 +257,21 @@ bool MP2Node::createKeyValue(string key, string value, ReplicaType replica, int 
 	 * Implement this
 	 */
 	// Insert key, value, replicaType into the hash table
-	// if txId == SP
-	bool success = false;
+	// if txId == SP then check if key already exists as don't want to overwrite
+	bool success = false; 
+	if (txId == SP_MSG){
+		string value = this->ht->read(key);
+		if (value == "")
+			success = this->ht->create(key, value); // create key but no logging as this is a background process
+	}
+	else{
+		success = this->ht->create(key, value);
+		if(success)
+			log->logCreateSuccess(&memberNode->addr, false, txId, key, value);
+		else 
+			log->logCreateFail(&memberNode->addr, false, txId, key, value);
+	}
+	return success;
 
 }
 
@@ -270,11 +283,18 @@ bool MP2Node::createKeyValue(string key, string value, ReplicaType replica, int 
  * 			    1) Read key from local hash table
  * 			    2) Return value
  */
-string MP2Node::readKey(string key) {
+string MP2Node::readKey(string key, int txId) {
 	/*
 	 * Implement this
 	 */
 	// Read key from local hash table and return value
+	string value = this->ht->read(key);
+	if (value != "")
+		log->logReadSuccess(&memberNode->addr, false, txId, key, value);
+	else
+		log->logReadFail(&memberNode->addr, false, txId, key);
+
+	return value;
 }
 
 /**
@@ -285,11 +305,18 @@ string MP2Node::readKey(string key) {
  * 				1) Update the key to the new value in the local hash table
  * 				2) Return true or false based on success or failure
  */
-bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica) {
+bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica, int txId) {
 	/*
 	 * Implement this
 	 */
 	// Update key in local hash table and return true or false
+	bool success = this->ht->update(key, value);
+	if (success) 
+		log->logUpdateSuccess(&memberNode->addr, false, txId, key, value);
+	else 
+		log->logUpdateFail(&memberNode->addr, false, txId, key, value);
+	
+	return success;
 }
 
 /**
@@ -300,11 +327,44 @@ bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica) {
  * 				1) Delete the key from the local hash table
  * 				2) Return true or false based on success or failure
  */
-bool MP2Node::deletekey(string key) {
+bool MP2Node::deletekey(string key, int txId) {
 	/*
 	 * Implement this
 	 */
 	// Delete the key from the local hash table
+	// logging done here as well
+	bool success = this->ht->deleteKey(key);
+	// log this operation
+	if (success) 
+	    log->logDeleteSuccess(&memberNode->addr, false, txId, key);
+	else 
+	    log->logDeleteFail(&memberNode->addr, false, txId, key);	
+	
+	return success;
+}
+
+
+//----------------------------------------
+// helper functions for the server messages and use provide functions from Message class
+// sends reply messages from server for server operations to client
+void MP2Node::srvReply(MessageType mT, Address* fromaddr, int txId, bool success, string data){
+	MessageType repMsg;
+	// set reply message type
+	if (mT == MessageType::READ){
+		repMsg = MessageType::READREPLY;
+		Message msg(txId, this->memberNode->addr, data);
+		// send message
+	    string message = msg.toString();
+	    emulNet->ENsend(&memberNode->addr, fromaddr, message);   
+	}
+	else{
+		repMsg = MessageType::REPLY;
+		Message msg(txId, this->memberNode->addr, repMsg, success);
+		// send message
+	    string message = msg.toString();
+	    emulNet->ENsend(&memberNode->addr, fromaddr, message);   
+	}
+	
 }
 
 /**
@@ -335,7 +395,7 @@ void MP2Node::checkMessages() {
 		size = memberNode->mp2q.front().size;
 		memberNode->mp2q.pop();
 
-		string message(data, data + size);
+		string message(data, data + size); // create string from data to data + size, range iterator version of string ctr.
 
 		/*
 		 * Handle the message types here
@@ -346,22 +406,57 @@ void MP2Node::checkMessages() {
 		// different actions based on message type, and have to take care of stabilization messages.
 		switch(msg.type){
 			case MessageType::CREATE:{
+				// create key value pair at this server
+				bool success = createKeyValue(msg.key, msg.value, msg.replica, msg.transID);
+				// send reply if this is not a stabilization protocol create request as those happen in the background
+				if (msg.type != SP_MSG)
+					//std:: cout<< "send message from "<< std::endl;
+					srvReply(msg.type, &msg.fromAddr, msg.transID, success);
+				break;
 
 			}
 			case MessageType::READ:{
+				string value = readKey(msg.key, msg.transID);
+				bool success = !value.empty();
+				srvReply(msg.type, &msg.fromAddr, msg.transID, success, value);
+				break;
 
 			}
 			case MessageType::UPDATE:{
+				bool success = updateKeyValue(msg.key, msg.value, msg.replica, msg.transID);
+				srvReply(msg.type, &msg.fromAddr, msg.transID, success);
+				break;
 
 			}
 			case MessageType::DELETE:{
+				bool success = deletekey(msg.key, msg.transID);
+				srvReply(msg.type, &msg.fromAddr, msg.transID, success);
+				break;
 
 			}
+			// for reply need to update transaction map as well which keeps track of in-flight transactions
 			case MessageType::REPLY:{
+				// need to check msg.transID in  pending in-flight transactions at this node
+				auto it = txMap.find(msg.transID);
+				if (it == txMap.end())
+					break; // not a pending transaction maybe a thirs replica reply
+				auto tx = txMap[msg.transID];
+				tx->repCnt++;
+				if (msg.success)
+					tx->sucCnt ++;
+				break;
 				
 			}
 			case MessageType::READREPLY:{
-				
+				auto it = txMap.find(msg.transID);
+				if (it == txMap.end())
+					break; // not a pending transaction maybe a thirs replica reply
+				auto tx = txMap[msg.transID];
+				tx->repCnt++;
+				tx->value = msg.value;
+				if (msg.value != "")
+					tx->sucCnt++;
+				break;				
 			}
 		}
 
@@ -371,6 +466,85 @@ void MP2Node::checkMessages() {
 	 * This function should also ensure all READ and UPDATE operation
 	 * get QUORUM replies
 	 */
+	updateTxMap();
+}
+
+// creat log message based on client transaction state after 3 received messages or timeout 
+void MP2Node::clientLog(TxStat* tx, bool isCoordinator, bool success, int transID){
+	switch(tx->mT){
+		case CREATE:{
+			if (success)
+				log->logCreateSuccess(&memberNode->addr, isCoordinator, transID, tx->key, tx->value);
+			else
+				log->logCreateFail(&memberNode->addr, isCoordinator, transID, tx->key, tx->value);
+
+			break;
+		}
+		case READ:{
+			if (success)
+				log->logReadSuccess(&memberNode->addr, isCoordinator, transID, tx->key, tx->value);
+			else 
+				log->logReadFail(&memberNode->addr, isCoordinator, transID, tx->key);
+			
+			break;
+		}
+		case UPDATE:{
+			if (success)
+				log->logUpdateSuccess(&memberNode->addr, isCoordinator, transID, tx->key, tx->value);
+			else
+				log->logUpdateFail(&memberNode->addr, isCoordinator, transID, tx->key, tx->value);
+			break;
+		}
+		case DELETE:{
+			if (success)
+				log->logDeleteSuccess(&memberNode->addr, isCoordinator, transID, tx->key);
+			else
+				log->logDeleteFail(&memberNode->addr, isCoordinator, transID, tx->key);
+			break;
+		}
+	}
+
+}
+
+// updates txMap based on incoming reply messages.
+// check if 3 replies received and of 2 successful messages received in each txMap entry for
+// each pending transaction. 
+void MP2Node::updateTxMap(){
+	auto it = txMap.begin();
+	while (it != txMap.end()){
+		if (it->second->repCnt == 3){
+			// 3 replies received, can decide now
+			bool status = it->second->sucCnt == 2;
+			//if (!status)
+			//	std::cout<< "Failed to get enough successful messages"<<std::endl;
+			clientLog(it->second, true, status, it->first);
+			delete it->second;
+			it = txMap.erase(it);
+			continue;
+		}
+		else{
+			// speedup early transaction completion for example when first two replies are a success, or the first 
+			// two replies are a failure, or timeout
+			if ((it->second->sucCnt == 2) || (it->second->repCnt-it->second->sucCnt == 2)){
+				bool status = it->second->sucCnt == 2;
+			    clientLog(it->second, true, status, it->first);
+			    delete it->second;
+			    it = txMap.erase(it);
+			    continue;
+			}
+		}
+		// timeout
+		if (this->par->getcurrtime() - it->second->getTimestamp() > 30){
+			clientLog(it->second, true, false, it->first);
+			delete it->second;
+			it = txMap.erase(it);
+			continue;
+
+		}
+
+		it++;
+	}
+
 }
 
 /**
