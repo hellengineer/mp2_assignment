@@ -134,7 +134,7 @@ public:
 	//Own functions
 	//reply from server to client
 	void sendreply(string key, MessageType mT, bool success, Address* fromaddr, int txID, string content = ""); 
-    Message makeMsg(MessageType mT, string key, string value);
+    Message makeMsg(MessageType mT, string key, string value = "");
     void makeTx(int txId, MessageType mT, string key, string value = "");
     void srvReply(MessageType mT, Address* fromaddr, int txId, bool success, string data = "");
     void clientLog(TxStat* tx, bool isCoordinator, bool success, int transID);

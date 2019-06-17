@@ -51,6 +51,8 @@ void MP2Node::updateRing() {
 	 *  Step 1. Get the current membership list from Membership Protocol / MP1
 	 */
 	curMemList = getMembershipList();
+	// add current node to the ring.
+	curMemList.emplace_back(Node(this->memberNode->addr));
 
 	/*
 	 * Step 2: Construct the ring
@@ -58,9 +60,10 @@ void MP2Node::updateRing() {
 	// Sort the list based on the hashCode
 	sort(curMemList.begin(), curMemList.end());
 	//check ring against curMemList and decide if anything has changed
-	if (ring.size() != curMemList.size())
+	if (ring.size() != curMemList.size()){
 		change = true;
-	else if (ring.size() > 0){
+		//std::cout<<ring.size() <<" is the ring size and the member list size is: "<< curMemList.size() <<std::endl;
+	} else if (ring.size() > 0){
 		for (auto i = 0; i < ring.size(); i++ ){
 			if (curMemList[i].getHashCode() != ring[i].getHashCode()){
 				change = true; // atleast some difference between ring and the current membership list.
@@ -69,13 +72,20 @@ void MP2Node::updateRing() {
 		}
 	}
 	ring = curMemList; // update ring 
+	// if (!change){
+	// 	std::cout<< "No need to update ring with size: " <<ring.size()<<std::endl;
+	// }
+
 
 	/*
 	 * Step 3: Run the stabilization protocol IF REQUIRED
 	 */
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
-	if (change)
+	if (change){
+		//std::cout << "ring size is "<<ring.size()<<std::endl;
+		//std::cout<<"Need to update KV store ring"<<std::endl;
 		stabilizationProtocol();
+	}
 }
 
 /**
@@ -98,7 +108,7 @@ vector<Node> MP2Node::getMembershipList() {
 		memcpy(&addressOfThisMember.addr[0], &id, sizeof(int));
 		memcpy(&addressOfThisMember.addr[4], &port, sizeof(short));
 		curMemList.emplace_back(Node(addressOfThisMember));
-	}
+	}	
 	return curMemList;
 }
 
@@ -131,7 +141,7 @@ void MP2Node::makeTx(int txId, MessageType mT, string key, string value){
 // also adds a transaction object onto the transaction status map for this node
 // basically a wrapper for Message constructor + transaction maker.
 
-Message MP2Node::makeMsg(MessageType mT, string key, string value=""){
+Message MP2Node::makeMsg(MessageType mT, string key, string value){
 	int txId = g_transID; // get global transaction id
 	makeTx(txId, mT, key, value);
 	if(mT == CREATE || mT == UPDATE){
@@ -165,6 +175,9 @@ void MP2Node::clientCreate(string key, string value) {
 	// send a message to each replica
 	for (auto it = replicas.begin(); it != replicas.end(); it ++){
 		emulNet->ENsend(&memberNode->addr, it->getAddress(), message);
+		// string fromNode = memberNode->addr.getAddress();
+		// string toNode = (it->getAddress())->getAddress();
+		// std::cout<<"Node:" << fromNode <<" is sending create msg to node: "<< toNode << " for key "<< key <<std::endl;
 	}
 	g_transID++; // increment global transaction count for simulation
 }
@@ -240,6 +253,11 @@ void MP2Node::clientDelete(string key){
 	// send a message to each replica
 	for (auto it = replicas.begin(); it != replicas.end(); it ++){
 		emulNet->ENsend(&memberNode->addr, it->getAddress(), message);
+		string fromNode = memberNode->addr.getAddress();
+		string toNode = (it->getAddress())->getAddress();
+		std::cout<<"Node:" << fromNode <<" is sending delete msg to node: "<< toNode << " for key "<< key <<std::endl;
+		if (fromNode == toNode)
+			std::cout<< fromNode <<" coordinator is also a server for key: "<< key << std::endl;
 	}
 	g_transID++; // increment global transaction count for simulation
 }
@@ -335,12 +353,16 @@ bool MP2Node::deletekey(string key, int txId) {
 	// logging done here as well
 	bool success = this->ht->deleteKey(key);
 	// log this operation
-	if (txId != SP_MSG){
-	    if (success) 
+	//if (txId != SP_MSG){
+	    if (success) {
 	        log->logDeleteSuccess(&memberNode->addr, false, txId, key);
-	    else 
-	         log->logDeleteFail(&memberNode->addr, false, txId, key);	
-	 }
+	        //std::cout<< "key deleted: "<< key << std::endl;
+	    }
+	    else {
+	    	//std::cout << "delete failed " <<std::endl;
+	        log->logDeleteFail(&memberNode->addr, false, txId, key);	
+	    }
+	 //}
 	
 	return success;
 }
@@ -411,7 +433,7 @@ void MP2Node::checkMessages() {
 				// create key value pair at this server
 				bool success = createKeyValue(msg.key, msg.value, msg.replica, msg.transID);
 				// send reply if this is not a stabilization protocol create request as those happen in the background
-				if (msg.type != SP_MSG)
+				if (msg.transID != SP_MSG)
 					//std:: cout<< "send message from "<< std::endl;
 					srvReply(msg.type, &msg.fromAddr, msg.transID, success);
 				break;
@@ -432,8 +454,7 @@ void MP2Node::checkMessages() {
 			}
 			case MessageType::DELETE:{
 				bool success = deletekey(msg.key, msg.transID);
-				if (msg.type != SP_MSG)
-				    srvReply(msg.type, &msg.fromAddr, msg.transID, success);
+			    srvReply(msg.type, &msg.fromAddr, msg.transID, success);
 				break;
 
 			}
@@ -528,25 +549,25 @@ void MP2Node::updateTxMap(){
 		else{
 			// speedup early transaction completion for example when first two replies are a success, or the first 
 			// two replies are a failure, or timeout
-			//if ((it->second->sucCnt == 2) || (it->second->repCnt-it->second->sucCnt == 2)){
-			//	bool status = it->second->sucCnt >= 2;
-			//    clientLog(it->second, true, status, it->first);
-			//    delete it->second;
-			//    it = txMap.erase(it);
-			//    continue;
-			//}
-			if (it->second->sucCnt == 2){
-				clientLog(it->second, true, true, it->first);
-			    delete it->second;
-			    it = txMap.erase(it);
-			    continue;
+			if ((it->second->sucCnt == 2) || (it->second->repCnt-it->second->sucCnt == 2)){
+				bool status = it->second->sucCnt >= 2;
+			   clientLog(it->second, true, status, it->first);
+			   delete it->second;
+			   it = txMap.erase(it);
+			   continue;
 			}
-			if (it->second->repCnt-it->second->sucCnt == 2){
-				clientLog(it->second, true, false, it->first);
-			    delete it->second;
-			    it = txMap.erase(it);
-			    continue;
-			}
+			// if (it->second->sucCnt == 2){
+			// 	clientLog(it->second, true, true, it->first);
+			//     delete it->second;
+			//     it = txMap.erase(it);
+			//     continue;
+			// }
+			// if (it->second->repCnt-it->second->sucCnt == 2){
+			// 	clientLog(it->second, true, false, it->first);
+			//     delete it->second;
+			//     it = txMap.erase(it);
+			//     continue;
+			// }
 		}
 		// timeout
 		if (this->par->getcurrtime() - it->second->getTimestamp() > 10){
