@@ -30,6 +30,8 @@ def submit():
   print '==\n== [sandbox] Submitting Solutions \n=='
   
   (login, password) = loginPrompt()
+  #login = ''
+  #password =''
   if not login:
     print '!! Submission Cancelled'
     return
