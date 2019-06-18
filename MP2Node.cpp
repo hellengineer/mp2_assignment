@@ -89,7 +89,7 @@ void MP2Node::updateRing() {
 }
 
 /**
- * FUNCTION NAME: getMemberhipList
+ * FUNCTION NAME: getMembershipList
  *
  * DESCRIPTION: This function goes through the membership list from the Membership protocol/MP1 and
  * 				i) generates the hash code for each member
@@ -288,9 +288,14 @@ bool MP2Node::createKeyValue(string key, string value, ReplicaType replica, int 
 		
 	}
 	else{
-		string value = this->ht->read(key);
-		if (value == "")
-			success = this->ht->create(key, value); // create key but no logging as this is a background process		
+		string exists = this->ht->read(key);
+		if (exists == "")
+			success = this->ht->create(key, value); // create key but no logging as this is a background process
+		if (success){
+            log->logCreateSuccess(&memberNode->addr, false, txId, key, value);
+		    std::cout<<" stabilizationProtocol created key: "<<key <<" at node: "<<memberNode->addr.getAddress()<<
+		        " with value: " << value <<" at time: "<<this->par->getcurrtime()<<std::endl;
+        }			
 	}
 	return success;
 
@@ -433,11 +438,15 @@ void MP2Node::checkMessages() {
 		// different actions based on message type, and have to take care of stabilization messages.
 		switch(msg.type){
 			case MessageType::CREATE:{
+				if (msg.value =="" & msg.transID != SP_MSG){
+					std::cout<<message<<" tried to create a key-value pair with no value. "<<msg.key<<std::endl;
+					assert(1!=1);
+				}
 				// create key value pair at this server
 				bool success = createKeyValue(msg.key, msg.value, msg.replica, msg.transID);
 				// send reply if this is not a stabilization protocol create request as those happen in the background
 				if (msg.transID != SP_MSG)
-					//std:: cout<< "send message from "<< std::endl;
+					std:: cout<< "normal create from message: "<<message<< "k,v = "<< msg.key<<", "<< msg.value<< std::endl;
 					srvReply(msg.type, &msg.fromAddr, msg.transID, success);
 				break;
 
@@ -654,6 +663,8 @@ int MP2Node::enqueueWrapper(void *env, char *buff, int size) {
  *				1) Ensures that there are three "CORRECT" replicas of all the keys in spite of failures and joins
  *				Note:- "CORRECT" replicas implies that every key is replicated in its two neighboring nodes in the ring
  */
+
+
 void MP2Node::stabilizationProtocol() {
 	/*
 	 * Implement this
@@ -661,16 +672,20 @@ void MP2Node::stabilizationProtocol() {
 	// for each replica transfer over the entire hashtable. May not be as efficient as possible.
 	// call this function after assigning the new current membership list to the ring vector
 	// TODO: update hasReplicas vector as well.
-	for (auto it = this->ht->hashTable.begin(); it != this->ht->hashTable.end(); it++){
-		string key = it->first;
-		string value = it->second;
+	for (const auto& x : this->ht->hashTable){
+		string key = x.first;
+		string value = x.second;
 		auto replicas = findNodes(key); // get the new replica nodes
-		for (auto i = 0; i < replicas.size(); i++){
+		for (auto&  idx : replicas){
 			// create stabilization protocol message which will not be confused with transaction messages
 			Message msg(SP_MSG, this->memberNode->addr, MessageType::CREATE, key, value);
 			string message = msg.toString(); // convert to string
 			// send over network
-			emulNet->ENsend(&memberNode->addr, replicas[i].getAddress(), message);
+			string toNode = (idx.getAddress())->getAddress();
+			std::cout<<"sending stabilizationProtocol message : "<<message<<" for key: "<<key<< " and value: "
+			<<value<<" to Node: "<<toNode<< " at time: "<< this->par->getcurrtime() <<std::endl;
+			emulNet->ENsend(&memberNode->addr, idx.getAddress(), message);
 		}
 	}
 }
+
