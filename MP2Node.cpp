@@ -276,16 +276,31 @@ bool MP2Node::createKeyValue(string key, string value, ReplicaType replica, int 
 	 */
 	// Insert key, value, replicaType into the hash table
 	// if txId == SP then check if key already exists as don't want to overwrite
-	bool success = false; 
-	string isPresent = this->ht->read(key);
-	if (isPresent == "")
-	    success = this->ht->create(key, value); // create key but no logging as this is a background process
-	
-	if(success)
-		log->logCreateSuccess(&memberNode->addr, false, txId, key, value);
-	else 
-		log->logCreateFail(&memberNode->addr, false, txId, key, value);
-
+	// bool success = false; 
+	// string isPresent = this->ht->read(key);
+	// if (isPresent == "")
+	//     success = this->ht->create(key, value); // create key but no logging as this is a background process
+	// if (txId != SP_MSG){
+	//     if(success)
+	// 	    log->logCreateSuccess(&memberNode->addr, false, txId, key, value);
+	//     else 
+	// 	    log->logCreateFail(&memberNode->addr, false, txId, key, value);
+ //    }
+	// return success;
+	bool success = false;
+	if(txId != SP_MSG){
+		success = this->ht->create(key, value);
+		if(success)
+			log->logCreateSuccess(&memberNode->addr, false, txId, key, value);
+		else 
+			log->logCreateFail(&memberNode->addr, false, txId, key, value);	
+	}else{
+		string content = this->ht->read(key);
+		bool exist = (content != "");
+		if(!exist){
+			success = this->ht->create(key, value);	
+		}
+	}
 	return success;
 
 }
@@ -350,7 +365,7 @@ bool MP2Node::deletekey(string key, int txId) {
 	// logging done here as well
 	bool success = this->ht->deleteKey(key);
 	// log this operation
-	//if (txId != SP_MSG){
+	if (txId != SP_MSG){
 	    if (success) {
 	        log->logDeleteSuccess(&memberNode->addr, false, txId, key);
 	        //std::cout<< "key deleted: "<< key << std::endl;
@@ -359,7 +374,7 @@ bool MP2Node::deletekey(string key, int txId) {
 	    	//std::cout << "delete failed " <<std::endl;
 	        log->logDeleteFail(&memberNode->addr, false, txId, key);	
 	    }
-	 //}
+	 }
 	
 	return success;
 }
@@ -428,7 +443,7 @@ void MP2Node::checkMessages() {
 		switch(msg.type){
 			case MessageType::CREATE:{
 				if (msg.value =="" & msg.transID != SP_MSG){
-					std::cout<<message<<" tried to create a key-value pair with no value. "<<msg.key<<std::endl;
+					//std::cout<<message<<" tried to create a key-value pair with no value. "<<msg.key<<std::endl;
 					assert(1!=1);
 				}
 				// create key value pair at this server
@@ -450,16 +465,17 @@ void MP2Node::checkMessages() {
 			case MessageType::UPDATE:{
 				bool success = updateKeyValue(msg.key, msg.value, msg.replica, msg.transID);
 				srvReply(msg.type, &msg.fromAddr, msg.transID, success);
-				if (success)
-					std::cout << "updated "<<std::endl;
-				else
-					std::cout<<"update failed "<<std::endl;
+				// if (success)
+				// 	std::cout << "updated "<<std::endl;
+				// else
+				// 	std::cout<<"update failed "<<std::endl;
 				break;
 
 			}
 			case MessageType::DELETE:{
 				bool success = deletekey(msg.key, msg.transID);
-			    srvReply(msg.type, &msg.fromAddr, msg.transID, success);
+				if (msg.transID != SP_MSG)
+			        srvReply(msg.type, &msg.fromAddr, msg.transID, success);
 				break;
 
 			}
@@ -660,8 +676,8 @@ void MP2Node::stabilizationProtocol() {
 			string message = msg.toString(); // convert to string
 			// send over network
 			string toNode = (idx.getAddress())->getAddress();
-			std::cout<<"sending stabilizationProtocol message : "<<message<<" for key: "<<key<< " and value: "
-			<<value<<" to Node: "<<toNode<< " at time: "<< this->par->getcurrtime() <<std::endl;
+			// std::cout<<"sending stabilizationProtocol message : "<<message<<" for key: "<<key<< " and value: "
+			// <<value<<" to Node: "<<toNode<< " at time: "<< this->par->getcurrtime() <<std::endl;
 			emulNet->ENsend(&memberNode->addr, idx.getAddress(), message);
 		}
 	}
