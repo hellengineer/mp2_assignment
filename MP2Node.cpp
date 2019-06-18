@@ -277,17 +277,20 @@ bool MP2Node::createKeyValue(string key, string value, ReplicaType replica, int 
 	// Insert key, value, replicaType into the hash table
 	// if txId == SP then check if key already exists as don't want to overwrite
 	bool success = false; 
-	if (txId == SP_MSG){
-		string value = this->ht->read(key);
-		if (value == "")
-			success = this->ht->create(key, value); // create key but no logging as this is a background process
-	}
-	else{
+	if (txId != SP_MSG){
 		success = this->ht->create(key, value);
 		if(success)
 			log->logCreateSuccess(&memberNode->addr, false, txId, key, value);
 		else 
 			log->logCreateFail(&memberNode->addr, false, txId, key, value);
+
+		//std::cout << "creating key as a replica here"<<std::endl;
+		
+	}
+	else{
+		string value = this->ht->read(key);
+		if (value == "")
+			success = this->ht->create(key, value); // create key but no logging as this is a background process		
 	}
 	return success;
 
@@ -449,6 +452,10 @@ void MP2Node::checkMessages() {
 			case MessageType::UPDATE:{
 				bool success = updateKeyValue(msg.key, msg.value, msg.replica, msg.transID);
 				srvReply(msg.type, &msg.fromAddr, msg.transID, success);
+				if (success)
+					std::cout << "updated "<<std::endl;
+				else
+					std::cout<<"update failed "<<std::endl;
 				break;
 
 			}
@@ -483,14 +490,14 @@ void MP2Node::checkMessages() {
 				break;				
 			}
 		}
-
+		updateTxMap();
 	}
 
 	/*
 	 * This function should also ensure all READ and UPDATE operation
 	 * get QUORUM replies
 	 */
-	updateTxMap();
+	
 }
 
 // creat log message based on client transaction state after 3 received messages or timeout 
@@ -549,25 +556,25 @@ void MP2Node::updateTxMap(){
 		else{
 			// speedup early transaction completion for example when first two replies are a success, or the first 
 			// two replies are a failure, or timeout
-			if ((it->second->sucCnt == 2) || (it->second->repCnt-it->second->sucCnt == 2)){
-				bool status = it->second->sucCnt >= 2;
-			   clientLog(it->second, true, status, it->first);
-			   delete it->second;
-			   it = txMap.erase(it);
-			   continue;
+			// if ((it->second->sucCnt == 2) || (it->second->repCnt-it->second->sucCnt == 2)){
+			// 	bool status = it->second->sucCnt >= 2;
+			//    clientLog(it->second, true, status, it->first);
+			//    delete it->second;
+			//    it = txMap.erase(it);
+			//    continue;
+			//}
+			if (it->second->sucCnt == 2){
+				clientLog(it->second, true, true, it->first);
+			    delete it->second;
+			    it = txMap.erase(it);
+			    continue;
 			}
-			// if (it->second->sucCnt == 2){
-			// 	clientLog(it->second, true, true, it->first);
-			//     delete it->second;
-			//     it = txMap.erase(it);
-			//     continue;
-			// }
-			// if (it->second->repCnt-it->second->sucCnt == 2){
-			// 	clientLog(it->second, true, false, it->first);
-			//     delete it->second;
-			//     it = txMap.erase(it);
-			//     continue;
-			// }
+			if (it->second->repCnt-it->second->sucCnt == 2){
+				clientLog(it->second, true, false, it->first);
+			    delete it->second;
+			    it = txMap.erase(it);
+			    continue;
+			}
 		}
 		// timeout
 		if (this->par->getcurrtime() - it->second->getTimestamp() > 10){
